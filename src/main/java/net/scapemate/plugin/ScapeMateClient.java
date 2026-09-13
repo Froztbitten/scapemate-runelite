@@ -96,6 +96,15 @@ class ScapeMateClient
 	 */
 	void sync(String baseUrl, String token, LoadoutSnapshot snapshot)
 	{
+		sync(baseUrl, token, snapshot, null);
+	}
+
+	/**
+	 * As above, but reports the outcome. Used by the panel's Sync now button,
+	 * where the player is waiting for an answer.
+	 */
+	void sync(String baseUrl, String token, LoadoutSnapshot snapshot, ResultCallback callback)
+	{
 		Request request = new Request.Builder()
 			.url(baseUrl + "/plugin/sync")
 			.header("Authorization", "Bearer " + token)
@@ -108,6 +117,10 @@ class ScapeMateClient
 			public void onFailure(Call call, IOException e)
 			{
 				log.debug("ScapeMate sync failed", e);
+				if (callback != null)
+				{
+					callback.onError("Could not reach scapemate.net.");
+				}
 			}
 
 			@Override
@@ -115,9 +128,30 @@ class ScapeMateClient
 			{
 				try (Response res = response)
 				{
-					if (!res.isSuccessful())
+					if (res.isSuccessful())
 					{
-						log.debug("ScapeMate sync rejected: {}", res.code());
+						if (callback != null)
+						{
+							callback.onSuccess();
+						}
+						return;
+					}
+
+					log.debug("ScapeMate sync rejected: {}", res.code());
+					if (callback != null)
+					{
+						String payload = res.body() == null ? "" : res.body().string();
+						JsonObject parsed = gson.fromJson(payload, JsonObject.class);
+						callback.onError(parsed != null && parsed.has("error")
+							? parsed.get("error").getAsString()
+							: "Sync failed (" + res.code() + ")");
+					}
+				}
+				catch (Exception e)
+				{
+					if (callback != null)
+					{
+						callback.onError("Unexpected response.");
 					}
 				}
 			}

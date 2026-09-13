@@ -19,6 +19,7 @@ import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -79,7 +80,20 @@ public class ScapeMatePlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
-		panel = new ScapeMatePanel(this::pushLoadout);
+		panel = new ScapeMatePanel(new ScapeMatePanel.Actions()
+		{
+			@Override
+			public void setLoadout(String combatStyle)
+			{
+				pushLoadout(combatStyle);
+			}
+
+			@Override
+			public void syncNow()
+			{
+				forceSync();
+			}
+		});
 
 		navButton = NavigationButton.builder()
 			.tooltip("ScapeMate")
@@ -89,6 +103,7 @@ public class ScapeMatePlugin extends Plugin
 			.build();
 
 		clientToolbar.addNavigation(navButton);
+		panel.setPaired(hasToken());
 		redeemPairingCodeIfPresent();
 	}
 
@@ -162,6 +177,31 @@ public class ScapeMatePlugin extends Plugin
 		}
 	}
 
+	/**
+	 * The pairing code is typed into the settings panel while the plugin is
+	 * already running, so start-up and login are both too early to notice it.
+	 */
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!ScapeMateConfig.GROUP.equals(event.getGroup()))
+		{
+			return;
+		}
+
+		if ("pairingCode".equals(event.getKey()))
+		{
+			redeemPairingCodeIfPresent();
+		}
+		else if ("syncEnabled".equals(event.getKey()) && config.syncEnabled())
+		{
+			// Turning sync on should push straight away rather than waiting
+			// for the player to happen to change gear.
+			lastPayloadDigest = null;
+			maybeSync();
+		}
+	}
+
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
 	{
@@ -204,6 +244,13 @@ public class ScapeMatePlugin extends Plugin
 				configManager.setConfiguration(ScapeMateConfig.GROUP, "pluginToken", token);
 				configManager.setConfiguration(ScapeMateConfig.GROUP, "pairingCode", "");
 				log.info("ScapeMate: paired successfully");
+				if (panel != null)
+				{
+					panel.setPaired(true);
+					panel.setStatus(config.syncEnabled()
+						? "Paired. Sending your gear..."
+						: "Paired. Tick \"Send my data\" to start syncing.", false);
+				}
 				lastPayloadDigest = null;
 				maybeSync();
 			}
@@ -212,8 +259,70 @@ public class ScapeMatePlugin extends Plugin
 			public void onError(String message)
 			{
 				log.warn("ScapeMate: pairing failed - {}", message);
+				if (panel != null)
+				{
+					panel.setPaired(false);
+					panel.setStatus(message, true);
+				}
 			}
 		});
+	}
+
+	private boolean hasToken()
+	{
+		String token = config.pluginToken();
+		return token != null && !token.isEmpty();
+	}
+
+	/**
+	 * Pushes the current gear and levels regardless of the change detection,
+	 * so the player can confirm the link is working without swapping gear.
+	 */
+	private void forceSync()
+	{
+		if (!hasToken())
+		{
+			panel.setStatus("Not paired yet.", true);
+			return;
+		}
+
+		// The data disclosure lives on that toggle, so nothing leaves the
+		// client until it is ticked - a button press is not a substitute.
+		if (!config.syncEnabled())
+		{
+			panel.setStatus("Tick \"Send my data to scapemate.net\" first.", true);
+			return;
+		}
+
+		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
+		{
+			panel.setStatus("Log in first.", true);
+			return;
+		}
+
+		panel.setBusy(true);
+		panel.setStatus("Syncing...", false);
+
+		ScapeMateClient.LoadoutSnapshot snapshot = buildSnapshot();
+		api.sync(config.apiBaseUrl(), config.pluginToken(), snapshot,
+			new ScapeMateClient.ResultCallback()
+			{
+				@Override
+				public void onSuccess()
+				{
+					lastSyncAt = System.currentTimeMillis();
+					panel.setBusy(false);
+					panel.setStatus("Synced " + snapshot.equipment.size()
+						+ " items and " + snapshot.levels.size() + " levels.", false);
+				}
+
+				@Override
+				public void onError(String message)
+				{
+					panel.setBusy(false);
+					panel.setStatus(message, true);
+				}
+			});
 	}
 
 	/** Sends the current loadout, unless it is unchanged or too soon. */

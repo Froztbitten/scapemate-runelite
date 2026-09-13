@@ -21,11 +21,15 @@ import net.runelite.client.ui.PluginPanel;
 class ScapeMatePanel extends PluginPanel
 {
 	private final JLabel status = new JLabel(" ");
+	private final JLabel pairing = new JLabel("Checking...");
 	private final JButton meleeButton = new JButton("Set equipped as current melee loadout");
+	private final JButton syncButton = new JButton("Sync gear and levels now");
 
 	interface Actions
 	{
 		void setLoadout(String combatStyle);
+
+		void syncNow();
 	}
 
 	ScapeMatePanel(Actions actions)
@@ -53,9 +57,19 @@ class ScapeMatePanel extends PluginPanel
 		blurb.setBorder(BorderFactory.createEmptyBorder(6, 0, 10, 0));
 		content.add(blurb);
 
+		// Pairing state first: almost every failure below traces back to it.
+		pairing.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		pairing.setAlignmentX(Component.LEFT_ALIGNMENT);
+		pairing.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+		content.add(pairing);
+
 		JPanel buttons = new JPanel(new GridLayout(0, 1, 0, 6));
 		buttons.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		syncButton.setFocusPainted(false);
+		syncButton.addActionListener(e -> actions.syncNow());
+		buttons.add(syncButton);
 
 		meleeButton.setFocusPainted(false);
 		meleeButton.addActionListener(e -> actions.setLoadout("melee"));
@@ -85,6 +99,26 @@ class ScapeMatePanel extends PluginPanel
 
 	void setBusy(boolean busy)
 	{
-		SwingUtilities.invokeLater(() -> meleeButton.setEnabled(!busy));
+		SwingUtilities.invokeLater(() ->
+		{
+			meleeButton.setEnabled(!busy);
+			syncButton.setEnabled(!busy);
+		});
+	}
+
+	/** Shown above the buttons, since most failures come back to pairing. */
+	void setPaired(boolean paired)
+	{
+		SwingUtilities.invokeLater(() ->
+		{
+			pairing.setText(paired
+				? "Paired with scapemate.net"
+				: "<html><body style='width:170px'>Not paired. Generate a code at "
+					+ "scapemate.net/connect and paste it into this plugin's "
+					+ "settings.</body></html>");
+			pairing.setForeground(paired
+				? ColorScheme.PROGRESS_COMPLETE_COLOR
+				: ColorScheme.PROGRESS_ERROR_COLOR);
+		});
 	}
 }
