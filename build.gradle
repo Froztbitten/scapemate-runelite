@@ -36,6 +36,9 @@ tasks.withType(JavaCompile).configureEach {
 
 test {
     useJUnit()
+    // src/test holds the development launcher, not a test suite. Gradle 9
+    // treats "test sources but no tests" as a misconfiguration by default.
+    failOnNoDiscoveredTests = false
 }
 
 def pluginMainClass = 'net.scapemate.plugin.ScapeMatePluginTest'
