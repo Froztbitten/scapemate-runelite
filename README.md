@@ -44,3 +44,7 @@ one if your default JDK is newer.
 Then launch RuneLite with the plugin on the classpath, or use the RuneLite
 developer tools' "sideload" path. See
 <https://github.com/runelite/plugin-hub#testing-your-plugin>.
+
+## Licence
+
+BSD 2-Clause. See [LICENSE](LICENSE).
