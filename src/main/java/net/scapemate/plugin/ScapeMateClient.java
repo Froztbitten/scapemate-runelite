@@ -214,6 +214,47 @@ class ScapeMateClient
 		});
 	}
 
+	/** Confirms the token is accepted, independent of any game state. */
+	void ping(String baseUrl, String token, ResultCallback callback)
+	{
+		Request request = new Request.Builder()
+			.url(baseUrl + "/plugin/ping")
+			.header("Authorization", "Bearer " + token)
+			.post(RequestBody.create(JSON, "{}"))
+			.build();
+
+		httpClient.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				callback.onError("Cannot reach " + baseUrl + " - " + e.getMessage());
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				try (Response res = response)
+				{
+					String payload = res.body() == null ? "" : res.body().string();
+					if (res.isSuccessful())
+					{
+						callback.onSuccess();
+						return;
+					}
+					JsonObject parsed = gson.fromJson(payload, JsonObject.class);
+					callback.onError(parsed != null && parsed.has("error")
+						? parsed.get("error").getAsString()
+						: "Server said " + res.code());
+				}
+				catch (Exception e)
+				{
+					callback.onError("Unexpected response: " + e.getMessage());
+				}
+			}
+		});
+	}
+
 	/** Wire format for {@code POST /api/plugin/sync}. */
 	static class LoadoutSnapshot
 	{

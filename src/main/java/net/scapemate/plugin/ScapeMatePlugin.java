@@ -69,6 +69,7 @@ public class ScapeMatePlugin extends Plugin
 	private ScapeMatePanel panel;
 
 	private long lastSyncAt;
+	private long lastSuccessfulSyncAt;
 	private String lastPayloadDigest;
 
 	@Provides
@@ -93,6 +94,12 @@ public class ScapeMatePlugin extends Plugin
 			{
 				forceSync();
 			}
+
+			@Override
+			public void testConnection()
+			{
+				testConnection();
+			}
 		});
 
 		navButton = NavigationButton.builder()
@@ -103,7 +110,7 @@ public class ScapeMatePlugin extends Plugin
 			.build();
 
 		clientToolbar.addNavigation(navButton);
-		panel.setPaired(hasToken());
+		refreshPanel();
 		redeemPairingCodeIfPresent();
 	}
 
@@ -169,6 +176,7 @@ public class ScapeMatePlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
+		refreshPanel();
 		if (event.getGameState() == GameState.LOGGED_IN)
 		{
 			// Force the next sync through: this is a different character or session.
@@ -189,6 +197,7 @@ public class ScapeMatePlugin extends Plugin
 			return;
 		}
 
+		refreshPanel();
 		if ("pairingCode".equals(event.getKey()))
 		{
 			redeemPairingCodeIfPresent();
@@ -246,7 +255,7 @@ public class ScapeMatePlugin extends Plugin
 				log.info("ScapeMate: paired successfully");
 				if (panel != null)
 				{
-					panel.setPaired(true);
+					refreshPanel();
 					panel.setStatus(config.syncEnabled()
 						? "Paired. Sending your gear..."
 						: "Paired. Tick \"Send my data\" to start syncing.", false);
@@ -263,11 +272,61 @@ public class ScapeMatePlugin extends Plugin
 				log.warn("ScapeMate: pairing failed - {}", message);
 				if (panel != null)
 				{
-					panel.setPaired(false);
+					refreshPanel();
 					panel.setStatus(message, true);
 				}
 			}
 		});
+	}
+
+	/** Redraws the checklist from the current config and game state. */
+	private void refreshPanel()
+	{
+		if (panel == null)
+		{
+			return;
+		}
+		panel.setState(
+			hasToken(),
+			config.syncEnabled(),
+			client.getGameState() == GameState.LOGGED_IN && client.getLocalPlayer() != null,
+			lastSuccessfulSyncAt);
+	}
+
+	/**
+	 * Verifies the token against the server without needing game state, so a
+	 * broken link can be told apart from a sync that had nothing to send.
+	 */
+	private void testConnection()
+	{
+		refreshPanel();
+
+		if (!hasToken())
+		{
+			panel.setStatus("Not paired. Paste a code from scapemate.net/connect.", true);
+			return;
+		}
+
+		panel.setBusy(true);
+		panel.setStatus("Contacting " + config.apiBaseUrl() + "...", false);
+
+		api.ping(config.apiBaseUrl(), config.pluginToken(),
+			new ScapeMateClient.ResultCallback()
+			{
+				@Override
+				public void onSuccess()
+				{
+					panel.setBusy(false);
+					panel.setStatus("Connection OK. The server accepted this token.", false);
+				}
+
+				@Override
+				public void onError(String message)
+				{
+					panel.setBusy(false);
+					panel.setStatus(message, true);
+				}
+			});
 	}
 
 	private boolean hasToken()
@@ -378,6 +437,8 @@ public class ScapeMatePlugin extends Plugin
 				@Override
 				public void onSuccess()
 				{
+					lastSuccessfulSyncAt = System.currentTimeMillis();
+					refreshPanel();
 					if (report && panel != null)
 					{
 						panel.setStatus("Synced " + snapshot.equipment.size()
