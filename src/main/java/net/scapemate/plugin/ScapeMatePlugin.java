@@ -22,6 +22,9 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.ImageUtil;
 
 @PluginDescriptor(
 	name = "ScapeMate",
@@ -58,6 +61,12 @@ public class ScapeMatePlugin extends Plugin
 	@Inject
 	private ScapeMateClient api;
 
+	@Inject
+	private ClientToolbar clientToolbar;
+
+	private NavigationButton navButton;
+	private ScapeMatePanel panel;
+
 	private long lastSyncAt;
 	private String lastPayloadDigest;
 
@@ -70,13 +79,76 @@ public class ScapeMatePlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		panel = new ScapeMatePanel(this::pushLoadout);
+
+		navButton = NavigationButton.builder()
+			.tooltip("ScapeMate")
+			.icon(ImageUtil.loadImageResource(ScapeMatePlugin.class, "icon.png"))
+			.priority(7)
+			.panel(panel)
+			.build();
+
+		clientToolbar.addNavigation(navButton);
 		redeemPairingCodeIfPresent();
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		clientToolbar.removeNavigation(navButton);
+		navButton = null;
+		panel = null;
 		lastPayloadDigest = null;
+	}
+
+	/**
+	 * Sends the worn equipment to the site as the named loadout. Reports back
+	 * to the panel either way: this one is user-initiated, so silence would be
+	 * indistinguishable from the button not working.
+	 */
+	private void pushLoadout(String combatStyle)
+	{
+		String token = config.pluginToken();
+		if (token == null || token.isEmpty())
+		{
+			panel.setStatus("Not paired yet. Add a code from scapemate.net/connect.", true);
+			return;
+		}
+
+		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
+		{
+			panel.setStatus("Log in first.", true);
+			return;
+		}
+
+		ScapeMateClient.LoadoutSnapshot snapshot = buildSnapshot();
+		if (snapshot.equipment.isEmpty())
+		{
+			panel.setStatus("You are not wearing anything.", true);
+			return;
+		}
+
+		panel.setBusy(true);
+		panel.setStatus("Sending...", false);
+
+		api.setLoadout(config.apiBaseUrl(), token, combatStyle, snapshot,
+			new ScapeMateClient.ResultCallback()
+			{
+				@Override
+				public void onSuccess()
+				{
+					panel.setBusy(false);
+					panel.setStatus("Saved " + snapshot.equipment.size()
+						+ " items as your " + combatStyle + " loadout.", false);
+				}
+
+				@Override
+				public void onError(String message)
+				{
+					panel.setBusy(false);
+					panel.setStatus(message, true);
+				}
+			});
 	}
 
 	@Subscribe

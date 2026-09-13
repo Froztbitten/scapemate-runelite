@@ -124,6 +124,62 @@ class ScapeMateClient
 		});
 	}
 
+	interface ResultCallback
+	{
+		void onSuccess();
+
+		void onError(String message);
+	}
+
+	/**
+	 * Copies the worn equipment into one of the site's loadouts. Unlike sync,
+	 * this is user-initiated, so failures are reported back to the panel.
+	 */
+	void setLoadout(String baseUrl, String token, String combatStyle,
+		LoadoutSnapshot snapshot, ResultCallback callback)
+	{
+		JsonObject body = gson.toJsonTree(snapshot).getAsJsonObject();
+		body.addProperty("combatStyle", combatStyle);
+
+		Request request = new Request.Builder()
+			.url(baseUrl + "/plugin/loadout")
+			.header("Authorization", "Bearer " + token)
+			.post(RequestBody.create(JSON, gson.toJson(body)))
+			.build();
+
+		httpClient.newCall(request).enqueue(new Callback()
+		{
+			@Override
+			public void onFailure(Call call, IOException e)
+			{
+				callback.onError("Could not reach scapemate.net.");
+			}
+
+			@Override
+			public void onResponse(Call call, Response response)
+			{
+				try (Response res = response)
+				{
+					if (res.isSuccessful())
+					{
+						callback.onSuccess();
+						return;
+					}
+
+					String payload = res.body() == null ? "" : res.body().string();
+					JsonObject parsed = gson.fromJson(payload, JsonObject.class);
+					callback.onError(parsed != null && parsed.has("error")
+						? parsed.get("error").getAsString()
+						: "Failed (" + res.code() + ")");
+				}
+				catch (Exception e)
+				{
+					callback.onError("Unexpected response.");
+				}
+			}
+		});
+	}
+
 	/** Wire format for {@code POST /api/plugin/sync}. */
 	static class LoadoutSnapshot
 	{
