@@ -19,6 +19,11 @@ import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.callback.ClientThread;
+import net.runelite.client.chat.ChatColorType;
+import net.runelite.client.chat.ChatMessageBuilder;
+import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
@@ -65,6 +70,12 @@ public class ScapeMatePlugin extends Plugin
 	@Inject
 	private ClientToolbar clientToolbar;
 
+	@Inject
+	private ChatMessageManager chatMessageManager;
+
+	@Inject
+	private ClientThread clientThread;
+
 	private NavigationButton navButton;
 	private ScapeMatePanel panel;
 
@@ -81,26 +92,7 @@ public class ScapeMatePlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
-		panel = new ScapeMatePanel(new ScapeMatePanel.Actions()
-		{
-			@Override
-			public void setLoadout(String combatStyle)
-			{
-				pushLoadout(combatStyle);
-			}
-
-			@Override
-			public void syncNow()
-			{
-				forceSync();
-			}
-
-			@Override
-			public void testConnection()
-			{
-				testConnection();
-			}
-		});
+		panel = new ScapeMatePanel(this::pushLoadout);
 
 		navButton = NavigationButton.builder()
 			.tooltip("ScapeMate")
@@ -133,25 +125,38 @@ public class ScapeMatePlugin extends Plugin
 		String token = config.pluginToken();
 		if (token == null || token.isEmpty())
 		{
-			panel.setStatus("Not paired yet. Add a code from scapemate.net/connect.", true);
+			report("Not paired yet. Paste a code from scapemate.net/connect.", true);
 			return;
 		}
 
 		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
 		{
-			panel.setStatus("Log in first.", true);
+			report("Log in first.", true);
+			return;
+		}
+
+		panel.setBusy(true);
+		clientThread.invoke(() -> sendLoadout(combatStyle, token));
+	}
+
+	private void sendLoadout(String combatStyle, String token)
+	{
+		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
+		{
+			panel.setBusy(false);
+			report("Log in first.", true);
 			return;
 		}
 
 		ScapeMateClient.LoadoutSnapshot snapshot = buildSnapshot();
 		if (snapshot.equipment.isEmpty())
 		{
-			panel.setStatus("You are not wearing anything.", true);
+			panel.setBusy(false);
+			report("You are not wearing anything.", true);
 			return;
 		}
 
-		panel.setBusy(true);
-		panel.setStatus("Sending...", false);
+		report("Sending...", false);
 
 		api.setLoadout(config.apiBaseUrl(), token, combatStyle, snapshot,
 			new ScapeMateClient.ResultCallback()
@@ -160,7 +165,7 @@ public class ScapeMatePlugin extends Plugin
 				public void onSuccess()
 				{
 					panel.setBusy(false);
-					panel.setStatus("Saved " + snapshot.equipment.size()
+					report("Saved " + snapshot.equipment.size()
 						+ " items as your " + combatStyle + " loadout.", false);
 				}
 
@@ -168,7 +173,7 @@ public class ScapeMatePlugin extends Plugin
 				public void onError(String message)
 				{
 					panel.setBusy(false);
-					panel.setStatus(message, true);
+					report(message, true);
 				}
 			});
 	}
@@ -201,6 +206,18 @@ public class ScapeMatePlugin extends Plugin
 		if ("pairingCode".equals(event.getKey()))
 		{
 			redeemPairingCodeIfPresent();
+		}
+		else if ("testConnection".equals(event.getKey()) && config.testConnection())
+		{
+			// RuneLite config has no button type, so these are checkboxes that
+			// run the action and untick themselves.
+			configManager.setConfiguration(ScapeMateConfig.GROUP, "testConnection", false);
+			testConnection();
+		}
+		else if ("syncNow".equals(event.getKey()) && config.syncNow())
+		{
+			configManager.setConfiguration(ScapeMateConfig.GROUP, "syncNow", false);
+			forceSync();
 		}
 		else if ("syncEnabled".equals(event.getKey()) && config.syncEnabled())
 		{
@@ -256,9 +273,9 @@ public class ScapeMatePlugin extends Plugin
 				if (panel != null)
 				{
 					refreshPanel();
-					panel.setStatus(config.syncEnabled()
+					report(config.syncEnabled()
 						? "Paired. Sending your gear..."
-						: "Paired. Tick \"Send my data\" to start syncing.", false);
+						: "Paired. Now tick \"Send my data to scapemate.net\" in settings.", false);
 				}
 				lastPayloadDigest = null;
 				// Use the token we were just handed: reading it back through
@@ -273,10 +290,46 @@ public class ScapeMatePlugin extends Plugin
 				if (panel != null)
 				{
 					refreshPanel();
-					panel.setStatus(message, true);
+					report(message, true);
 				}
 			}
 		});
+	}
+
+	/**
+	 * Mirrors status into the chat box as well as the panel. The action
+	 * controls now live in settings, so the side panel may not be open.
+	 */
+	private void report(String message, boolean error)
+	{
+		if (panel != null)
+		{
+			panel.setStatus(message, error);
+		}
+
+		if (error)
+		{
+			log.warn("ScapeMate: {}", message);
+		}
+		else
+		{
+			log.info("ScapeMate: {}", message);
+		}
+
+		if (client.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+
+		chatMessageManager.queue(QueuedMessage.builder()
+			.type(net.runelite.api.ChatMessageType.CONSOLE)
+			.runeLiteFormattedMessage(new ChatMessageBuilder()
+				.append(ChatColorType.HIGHLIGHT)
+				.append("[ScapeMate] ")
+				.append(ChatColorType.NORMAL)
+				.append(message)
+				.build())
+			.build());
 	}
 
 	/** Redraws the checklist from the current config and game state. */
@@ -303,12 +356,12 @@ public class ScapeMatePlugin extends Plugin
 
 		if (!hasToken())
 		{
-			panel.setStatus("Not paired. Paste a code from scapemate.net/connect.", true);
+			report("Not paired. Paste a code from scapemate.net/connect.", true);
 			return;
 		}
 
 		panel.setBusy(true);
-		panel.setStatus("Contacting " + config.apiBaseUrl() + "...", false);
+		report("Contacting " + config.apiBaseUrl() + "...", false);
 
 		api.ping(config.apiBaseUrl(), config.pluginToken(),
 			new ScapeMateClient.ResultCallback()
@@ -317,14 +370,14 @@ public class ScapeMatePlugin extends Plugin
 				public void onSuccess()
 				{
 					panel.setBusy(false);
-					panel.setStatus("Connection OK. The server accepted this token.", false);
+					report("Connection OK. The server accepted this token.", false);
 				}
 
 				@Override
 				public void onError(String message)
 				{
 					panel.setBusy(false);
-					panel.setStatus(message, true);
+					report(message, true);
 				}
 			});
 	}
@@ -343,7 +396,7 @@ public class ScapeMatePlugin extends Plugin
 	{
 		if (!hasToken())
 		{
-			panel.setStatus("Not paired yet.", true);
+			report("Not paired yet. Paste a code from scapemate.net/connect.", true);
 			return;
 		}
 
@@ -351,17 +404,17 @@ public class ScapeMatePlugin extends Plugin
 		// client until it is ticked - a button press is not a substitute.
 		if (!config.syncEnabled())
 		{
-			panel.setStatus("Tick \"Send my data to scapemate.net\" first.", true);
+			report("Tick \"Send my data to scapemate.net\" in settings first.", true);
 			return;
 		}
 
 		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
 		{
-			panel.setStatus("Log in first.", true);
+			report("Log in first.", true);
 			return;
 		}
 
-		panel.setStatus("Syncing...", false);
+		report("Syncing...", false);
 		// Bypasses the change detection: the point is to confirm the link.
 		lastPayloadDigest = null;
 		pushSnapshot(config.pluginToken(), true);
@@ -419,11 +472,19 @@ public class ScapeMatePlugin extends Plugin
 			return;
 		}
 
+		// getItemContainer and getLocalPlayer are only valid on the game thread.
+		// Called from a config change or a button they can return null, which
+		// is indistinguishable from being logged out.
+		clientThread.invoke(() -> sendSnapshot(token, report));
+	}
+
+	private void sendSnapshot(String token, boolean report)
+	{
 		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
 		{
-			if (report && panel != null)
+			if (report)
 			{
-				panel.setStatus("Paired. Log in and it will sync.", false);
+				report("Log in and it will sync.", true);
 			}
 			return;
 		}
@@ -439,9 +500,9 @@ public class ScapeMatePlugin extends Plugin
 				{
 					lastSuccessfulSyncAt = System.currentTimeMillis();
 					refreshPanel();
-					if (report && panel != null)
+					if (report)
 					{
-						panel.setStatus("Synced " + snapshot.equipment.size()
+						report("Synced " + snapshot.equipment.size()
 							+ " items and " + snapshot.levels.size() + " levels.", false);
 					}
 				}
@@ -451,11 +512,7 @@ public class ScapeMatePlugin extends Plugin
 				{
 					// Always surface this. A silent failure here is exactly
 					// what made pairing look like it did nothing.
-					log.warn("ScapeMate: sync failed - {}", message);
-					if (panel != null)
-					{
-						panel.setStatus(message, true);
-					}
+					report(message, true);
 				}
 			});
 	}

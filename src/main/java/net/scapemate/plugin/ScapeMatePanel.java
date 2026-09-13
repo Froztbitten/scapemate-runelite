@@ -30,17 +30,11 @@ class ScapeMatePanel extends PluginPanel
 	private final JLabel lastSyncRow = new JLabel();
 	private final JLabel status = new JLabel(" ");
 
-	private final JButton testButton = new JButton("Test connection");
-	private final JButton syncButton = new JButton("Sync gear and levels now");
 	private final JButton meleeButton = new JButton("Set equipped as melee loadout");
 
 	interface Actions
 	{
 		void setLoadout(String combatStyle);
-
-		void syncNow();
-
-		void testConnection();
 	}
 
 	ScapeMatePanel(Actions actions)
@@ -74,15 +68,18 @@ class ScapeMatePanel extends PluginPanel
 		JPanel buttons = new JPanel(new GridLayout(0, 1, 0, 6));
 		buttons.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
-		for (JButton button : new JButton[]{testButton, syncButton, meleeButton})
-		{
-			button.setFocusPainted(false);
-			buttons.add(button);
-		}
-		testButton.addActionListener(e -> actions.testConnection());
-		syncButton.addActionListener(e -> actions.syncNow());
+		meleeButton.setFocusPainted(false);
 		meleeButton.addActionListener(e -> actions.setLoadout("melee"));
+		buttons.add(meleeButton);
 		content.add(buttons);
+
+		JLabel hint = new JLabel(
+			"<html><body style='width:170px'>Test connection and Sync now live in "
+				+ "this plugin's settings.</body></html>");
+		hint.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		hint.setAlignmentX(Component.LEFT_ALIGNMENT);
+		hint.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+		content.add(hint);
 
 		status.setAlignmentX(Component.LEFT_ALIGNMENT);
 		status.setBorder(BorderFactory.createEmptyBorder(10, 0, 0, 0));
@@ -128,12 +125,7 @@ class ScapeMatePanel extends PluginPanel
 
 	void setBusy(boolean busy)
 	{
-		SwingUtilities.invokeLater(() ->
-		{
-			testButton.setEnabled(!busy);
-			syncButton.setEnabled(!busy);
-			meleeButton.setEnabled(!busy);
-		});
+		SwingUtilities.invokeLater(() -> meleeButton.setEnabled(!busy));
 	}
 
 	private static void mark(JLabel row, boolean ok, String okText, String failText)

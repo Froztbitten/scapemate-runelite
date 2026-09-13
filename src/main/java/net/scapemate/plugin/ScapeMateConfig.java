@@ -60,6 +60,35 @@ public interface ScapeMateConfig extends Config
 	}
 
 	@ConfigItem(
+		keyName = "testConnection",
+		name = "Test connection",
+		description =
+			"Tick to check that this client can reach scapemate.net and that its "
+			+ "pairing is still valid. Reports in the chat box and in the ScapeMate "
+			+ "side panel, then unticks itself.",
+		section = linkSection,
+		position = 4
+	)
+	default boolean testConnection()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "syncNow",
+		name = "Sync gear and levels now",
+		description =
+			"Tick to send your worn equipment and combat levels immediately, rather "
+			+ "than waiting for them to change. Unticks itself when done.",
+		section = linkSection,
+		position = 5
+	)
+	default boolean syncNow()
+	{
+		return false;
+	}
+
+	@ConfigItem(
 		keyName = "apiBaseUrl",
 		name = "API base URL",
 		description = "Only change this if you are running your own ScapeMate backend.",
