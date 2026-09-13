@@ -252,7 +252,9 @@ public class ScapeMatePlugin extends Plugin
 						: "Paired. Tick \"Send my data\" to start syncing.", false);
 				}
 				lastPayloadDigest = null;
-				maybeSync();
+				// Use the token we were just handed: reading it back through
+				// the config proxy can race with the write above.
+				pushSnapshot(token, true);
 			}
 
 			@Override
@@ -300,29 +302,10 @@ public class ScapeMatePlugin extends Plugin
 			return;
 		}
 
-		panel.setBusy(true);
 		panel.setStatus("Syncing...", false);
-
-		ScapeMateClient.LoadoutSnapshot snapshot = buildSnapshot();
-		api.sync(config.apiBaseUrl(), config.pluginToken(), snapshot,
-			new ScapeMateClient.ResultCallback()
-			{
-				@Override
-				public void onSuccess()
-				{
-					lastSyncAt = System.currentTimeMillis();
-					panel.setBusy(false);
-					panel.setStatus("Synced " + snapshot.equipment.size()
-						+ " items and " + snapshot.levels.size() + " levels.", false);
-				}
-
-				@Override
-				public void onError(String message)
-				{
-					panel.setBusy(false);
-					panel.setStatus(message, true);
-				}
-			});
+		// Bypasses the change detection: the point is to confirm the link.
+		lastPayloadDigest = null;
+		pushSnapshot(config.pluginToken(), true);
 	}
 
 	/** Sends the current loadout, unless it is unchanged or too soon. */
@@ -362,7 +345,58 @@ public class ScapeMatePlugin extends Plugin
 
 		lastSyncAt = now;
 		lastPayloadDigest = digest;
-		api.sync(config.apiBaseUrl(), token, snapshot);
+		pushSnapshot(token, false);
+	}
+
+	/**
+	 * The single place a snapshot is sent. `report` drives whether the panel is
+	 * updated: the automatic sync stays quiet, but anything the player asked
+	 * for has to say what happened.
+	 */
+	private void pushSnapshot(String token, boolean report)
+	{
+		if (!config.syncEnabled() || token == null || token.isEmpty())
+		{
+			return;
+		}
+
+		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
+		{
+			if (report && panel != null)
+			{
+				panel.setStatus("Paired. Log in and it will sync.", false);
+			}
+			return;
+		}
+
+		ScapeMateClient.LoadoutSnapshot snapshot = buildSnapshot();
+		lastSyncAt = System.currentTimeMillis();
+
+		api.sync(config.apiBaseUrl(), token, snapshot,
+			new ScapeMateClient.ResultCallback()
+			{
+				@Override
+				public void onSuccess()
+				{
+					if (report && panel != null)
+					{
+						panel.setStatus("Synced " + snapshot.equipment.size()
+							+ " items and " + snapshot.levels.size() + " levels.", false);
+					}
+				}
+
+				@Override
+				public void onError(String message)
+				{
+					// Always surface this. A silent failure here is exactly
+					// what made pairing look like it did nothing.
+					log.warn("ScapeMate: sync failed - {}", message);
+					if (panel != null)
+					{
+						panel.setStatus(message, true);
+					}
+				}
+			});
 	}
 
 	private ScapeMateClient.LoadoutSnapshot buildSnapshot()
