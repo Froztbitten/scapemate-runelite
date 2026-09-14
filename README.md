@@ -21,6 +21,13 @@ third-party site, not run by Jagex or RuneLite.
 1. Sign in at <https://scapemate.net/connect> and generate a pairing code.
 2. Paste it into the plugin's **Pairing code** setting in RuneLite.
 3. Tick **Send my data to scapemate.net**.
+4. Click **Set equipped as melee loadout** in the ScapeMate side panel once.
+
+That button copies the current gear into the melee loadout and enables live
+melee-loadout updates for the paired token. Later equipment changes are sent
+automatically while **Send my data to scapemate.net** remains enabled. The side
+panel intentionally contains only this button; action results appear in the
+RuneLite chat box.
 
 The code is single use and expires after ten minutes. It is exchanged for a
 token and then cleared from your settings. Revoke access any time from the

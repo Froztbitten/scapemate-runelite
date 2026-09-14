@@ -4,6 +4,7 @@ import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.Range;
 
 @ConfigGroup(ScapeMateConfig.GROUP)
 public interface ScapeMateConfig extends Config
@@ -64,8 +65,7 @@ public interface ScapeMateConfig extends Config
 		name = "Test connection",
 		description =
 			"Tick to check that this client can reach scapemate.net and that its "
-			+ "pairing is still valid. Reports in the chat box and in the ScapeMate "
-			+ "side panel, then unticks itself.",
+			+ "pairing is still valid. Reports in the chat box, then unticks itself.",
 		section = linkSection,
 		position = 4
 	)
@@ -86,6 +86,22 @@ public interface ScapeMateConfig extends Config
 	default boolean syncNow()
 	{
 		return false;
+	}
+
+	@Range(min = 1, max = 60)
+	@ConfigItem(
+		keyName = "syncIntervalMinutes",
+		name = "Minutes between syncs",
+		description =
+			"How long changes are gathered up before one update is sent. Lower is "
+			+ "closer to live, but every update is a request against scapemate.net's "
+			+ "hosting bill, so the default is deliberately relaxed.",
+		section = linkSection,
+		position = 6
+	)
+	default int syncIntervalMinutes()
+	{
+		return 5;
 	}
 
 	@ConfigItem(

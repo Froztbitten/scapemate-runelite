@@ -5,6 +5,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import javax.inject.Inject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +56,14 @@ public class ScapeMatePlugin extends Plugin
 	};
 
 	/** The server rejects anything faster; batch bursts of equipment changes. */
-	private static final long MIN_SYNC_INTERVAL_MS = 2500;
+	/**
+	 * Floor on how often a sync may be sent, whatever the config says. Every
+	 * sync is a Cloud Function invocation: at an update per XP drop, a thousand
+	 * concurrent players would cost thousands of dollars a month, where one
+	 * update per five minutes costs tens. Changes in between are coalesced and
+	 * sent by the trailing sync, so nothing is lost - only delayed.
+	 */
+	private static final long MIN_SYNC_INTERVAL_MS = 60_000;
 
 	@Inject
 	private Client client;
@@ -76,12 +86,15 @@ public class ScapeMatePlugin extends Plugin
 	@Inject
 	private ClientThread clientThread;
 
+	@Inject
+	private ScheduledExecutorService executorService;
+
 	private NavigationButton navButton;
 	private ScapeMatePanel panel;
 
 	private long lastSyncAt;
-	private long lastSuccessfulSyncAt;
 	private String lastPayloadDigest;
+	private volatile ScheduledFuture<?> pendingSync;
 
 	@Provides
 	ScapeMateConfig provideConfig(ConfigManager configManager)
@@ -102,7 +115,6 @@ public class ScapeMatePlugin extends Plugin
 			.build();
 
 		clientToolbar.addNavigation(navButton);
-		refreshPanel();
 		redeemPairingCodeIfPresent();
 	}
 
@@ -113,12 +125,16 @@ public class ScapeMatePlugin extends Plugin
 		navButton = null;
 		panel = null;
 		lastPayloadDigest = null;
+		if (pendingSync != null)
+		{
+			pendingSync.cancel(false);
+			pendingSync = null;
+		}
 	}
 
 	/**
-	 * Sends the worn equipment to the site as the named loadout. Reports back
-	 * to the panel either way: this one is user-initiated, so silence would be
-	 * indistinguishable from the button not working.
+	 * Sends the worn equipment to the site as the named loadout. Reports the
+	 * result in chat because this action was explicitly requested by the player.
 	 */
 	private void pushLoadout(String combatStyle)
 	{
@@ -132,6 +148,12 @@ public class ScapeMatePlugin extends Plugin
 		if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null)
 		{
 			report("Log in first.", true);
+			return;
+		}
+
+		if (!config.syncEnabled())
+		{
+			report("Turn on \"Send my data to scapemate.net\" in settings first.", true);
 			return;
 		}
 
@@ -156,23 +178,27 @@ public class ScapeMatePlugin extends Plugin
 			return;
 		}
 
-		report("Sending...", false);
-
 		api.setLoadout(config.apiBaseUrl(), token, combatStyle, snapshot,
 			new ScapeMateClient.ResultCallback()
 			{
 				@Override
 				public void onSuccess()
 				{
-					panel.setBusy(false);
-					report("Saved " + snapshot.equipment.size()
-						+ " items as your " + combatStyle + " loadout.", false);
+					if (panel != null)
+					{
+						panel.setBusy(false);
+					}
+					report("Live melee loadout enabled with " + snapshot.equipment.size()
+						+ " equipped items.", false);
 				}
 
 				@Override
 				public void onError(String message)
 				{
-					panel.setBusy(false);
+					if (panel != null)
+					{
+						panel.setBusy(false);
+					}
 					report(message, true);
 				}
 			});
@@ -181,7 +207,6 @@ public class ScapeMatePlugin extends Plugin
 	@Subscribe
 	public void onGameStateChanged(GameStateChanged event)
 	{
-		refreshPanel();
 		if (event.getGameState() == GameState.LOGGED_IN)
 		{
 			// Force the next sync through: this is a different character or session.
@@ -202,7 +227,6 @@ public class ScapeMatePlugin extends Plugin
 			return;
 		}
 
-		refreshPanel();
 		if ("pairingCode".equals(event.getKey()))
 		{
 			redeemPairingCodeIfPresent();
@@ -272,7 +296,6 @@ public class ScapeMatePlugin extends Plugin
 				log.info("ScapeMate: paired successfully");
 				if (panel != null)
 				{
-					refreshPanel();
 					report(config.syncEnabled()
 						? "Paired. Sending your gear..."
 						: "Paired. Now tick \"Send my data to scapemate.net\" in settings.", false);
@@ -289,7 +312,6 @@ public class ScapeMatePlugin extends Plugin
 				log.warn("ScapeMate: pairing failed - {}", message);
 				if (panel != null)
 				{
-					refreshPanel();
 					report(message, true);
 				}
 			}
@@ -297,16 +319,11 @@ public class ScapeMatePlugin extends Plugin
 	}
 
 	/**
-	 * Mirrors status into the chat box as well as the panel. The action
-	 * controls now live in settings, so the side panel may not be open.
+	 * Reports user-requested outcomes in chat and the RuneLite log. The panel
+	 * intentionally contains only its loadout button.
 	 */
 	private void report(String message, boolean error)
 	{
-		if (panel != null)
-		{
-			panel.setStatus(message, error);
-		}
-
 		if (error)
 		{
 			log.warn("ScapeMate: {}", message);
@@ -332,28 +349,12 @@ public class ScapeMatePlugin extends Plugin
 			.build());
 	}
 
-	/** Redraws the checklist from the current config and game state. */
-	private void refreshPanel()
-	{
-		if (panel == null)
-		{
-			return;
-		}
-		panel.setState(
-			hasToken(),
-			config.syncEnabled(),
-			client.getGameState() == GameState.LOGGED_IN && client.getLocalPlayer() != null,
-			lastSuccessfulSyncAt);
-	}
-
 	/**
 	 * Verifies the token against the server without needing game state, so a
 	 * broken link can be told apart from a sync that had nothing to send.
 	 */
 	private void testConnection()
 	{
-		refreshPanel();
-
 		if (!hasToken())
 		{
 			report("Not paired. Paste a code from scapemate.net/connect.", true);
@@ -449,10 +450,17 @@ public class ScapeMatePlugin extends Plugin
 			return;
 		}
 
+		long interval = syncIntervalMs();
 		long now = System.currentTimeMillis();
-		if (now - lastSyncAt < MIN_SYNC_INTERVAL_MS)
+		if (now - lastSyncAt < interval)
 		{
+			scheduleTrailingSync(interval - (now - lastSyncAt));
 			return;
+		}
+		if (pendingSync != null)
+		{
+			pendingSync.cancel(false);
+			pendingSync = null;
 		}
 
 		lastSyncAt = now;
@@ -460,10 +468,29 @@ public class ScapeMatePlugin extends Plugin
 		pushSnapshot(token, false);
 	}
 
+	/** Config interval, floored so it cannot be set to something abusive. */
+	private long syncIntervalMs()
+	{
+		return Math.max(MIN_SYNC_INTERVAL_MS, config.syncIntervalMinutes() * 60_000L);
+	}
+
+	/** Ensures a burst of equipment events still sends its final state. */
+	private void scheduleTrailingSync(long delayMs)
+	{
+		if (pendingSync != null)
+		{
+			pendingSync.cancel(false);
+		}
+		pendingSync = executorService.schedule(() ->
+		{
+			pendingSync = null;
+			clientThread.invoke(this::maybeSync);
+		}, Math.max(1, delayMs), TimeUnit.MILLISECONDS);
+	}
+
 	/**
-	 * The single place a snapshot is sent. `report` drives whether the panel is
-	 * updated: the automatic sync stays quiet, but anything the player asked
-	 * for has to say what happened.
+	 * The single place a snapshot is sent. Automatic sync stays quiet, but an
+	 * explicit player request reports what happened in chat.
 	 */
 	private void pushSnapshot(String token, boolean report)
 	{
@@ -498,8 +525,6 @@ public class ScapeMatePlugin extends Plugin
 				@Override
 				public void onSuccess()
 				{
-					lastSuccessfulSyncAt = System.currentTimeMillis();
-					refreshPanel();
 					if (report)
 					{
 						report("Synced " + snapshot.equipment.size()
