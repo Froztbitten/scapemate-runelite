@@ -12,9 +12,16 @@ paired:
 - your display name
 - your worn equipment item IDs
 - your combat levels: Attack, Strength, Defence, Ranged, Magic, Hitpoints, Prayer
+- the full contents and total value of your bank
+- if you are in a group, your group's shared storage contents and value
 
-Nothing else. No chat, no location, no inventory, no bank. scapemate.net is a
-third-party site, not run by Jagex or RuneLite.
+Your bank is read only while it is open in game, so it updates a handful of
+times a session rather than continuously. Anyone in your ScapeMate group can
+see your bank and levels — that is the point of a group, but it is worth
+knowing before you join one.
+
+Nothing else is sent. No chat, no private messages, no location, no inventory.
+scapemate.net is a third-party site, not run by Jagex or RuneLite.
 
 ## Setup
 

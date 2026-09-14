@@ -262,6 +262,17 @@ class ScapeMateClient
 		Map<String, Integer> levels;
 		java.util.List<EquippedItem> equipment;
 
+		/**
+		 * Bank and group storage as flat [itemId, quantity, ...] pairs. Half the
+		 * size of a list of objects, and the server validates the pairing.
+		 * Null rather than empty when the container has not been seen this
+		 * session, so an unopened bank does not look like an emptied one.
+		 */
+		int[] bank;
+		Long bankValue;
+		int[] sharedBank;
+		Long sharedBankValue;
+
 		LoadoutSnapshot(String playerName, Map<String, Integer> levels, java.util.List<EquippedItem> equipment)
 		{
 			this.playerName = playerName;

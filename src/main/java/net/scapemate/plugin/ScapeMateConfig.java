@@ -23,10 +23,12 @@ public interface ScapeMateConfig extends Config
 		name = "Send my data to scapemate.net",
 		description =
 			"WARNING: this sends data to scapemate.net, a third-party server not run by Jagex or RuneLite. " +
-			"While enabled it sends your display name, your worn equipment item IDs, and your combat skill " +
-			"levels (Attack, Strength, Defence, Ranged, Magic, Hitpoints, Prayer), so the site's DPS " +
-			"calculator can fill itself in. Nothing else is sent: no chat, no location, no inventory, no " +
-			"bank. Data is sent only while this is ticked and the plugin is paired.",
+			"While enabled it sends: your display name; your worn equipment; your combat levels (Attack, " +
+			"Strength, Defence, Ranged, Magic, Hitpoints, Prayer); the full contents and total value of " +
+			"your bank; and, if you are in a group, the contents and value of your group's shared storage. " +
+			"Your bank is read only while it is open, and anyone in your ScapeMate group can see it. " +
+			"Nothing else is sent: no chat, no private messages, no location, no inventory. Data is sent " +
+			"only while this is ticked and the plugin is paired.",
 		section = linkSection,
 		position = 1
 	)

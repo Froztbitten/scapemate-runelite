@@ -23,6 +23,7 @@ import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.game.ItemManager;
 import net.runelite.client.chat.ChatColorType;
 import net.runelite.client.chat.ChatMessageBuilder;
 import net.runelite.client.chat.ChatMessageManager;
@@ -85,6 +86,20 @@ public class ScapeMatePlugin extends Plugin
 
 	@Inject
 	private ClientThread clientThread;
+
+	@Inject
+	private ItemManager itemManager;
+
+	/**
+	 * Last seen contents of the bank and the group's shared storage, as flat
+	 * [itemId, quantity, ...] pairs. The client only holds these while the
+	 * container is open, so they are remembered here rather than read on demand:
+	 * null means "not seen this session", which differs from empty.
+	 */
+	private int[] bankContents;
+	private long bankValue;
+	private int[] sharedBankContents;
+	private long sharedBankValue;
 
 	@Inject
 	private ScheduledExecutorService executorService;
@@ -258,6 +273,34 @@ public class ScapeMatePlugin extends Plugin
 		if (event.getContainerId() == InventoryID.WORN)
 		{
 			maybeSync();
+			return;
+		}
+
+		// The bank is only readable while open, so these fire a handful of times
+		// a session rather than continuously.
+		if (event.getContainerId() == InventoryID.BANK)
+		{
+			int[] contents = flatten(event.getItemContainer());
+			if (contents != null)
+			{
+				bankContents = contents;
+				bankValue = valueOf(contents);
+				maybeSync();
+			}
+			return;
+		}
+
+		// Group Ironman shared storage. Reported by whichever member opened it;
+		// the server files it against the group rather than the player.
+		if (event.getContainerId() == InventoryID.INV_GROUP_TEMP)
+		{
+			int[] contents = flatten(event.getItemContainer());
+			if (contents != null)
+			{
+				sharedBankContents = contents;
+				sharedBankValue = valueOf(contents);
+				maybeSync();
+			}
 		}
 	}
 
@@ -441,8 +484,14 @@ public class ScapeMatePlugin extends Plugin
 		}
 
 		ScapeMateClient.LoadoutSnapshot snapshot = buildSnapshot();
+		// Bank value and size are part of the digest, or a bank-only change would
+		// look identical to the last payload and never be sent.
 		String digest = String.valueOf(snapshot.levels) + snapshot.equipment.size()
-			+ equipmentDigest(snapshot.equipment);
+			+ equipmentDigest(snapshot.equipment)
+			+ '|' + (snapshot.bank == null ? -1 : snapshot.bank.length)
+			+ ':' + snapshot.bankValue
+			+ '|' + (snapshot.sharedBank == null ? -1 : snapshot.sharedBank.length)
+			+ ':' + snapshot.sharedBankValue;
 
 		// Equipment and stat events fire in bursts; only send real changes.
 		if (digest.equals(lastPayloadDigest))
@@ -565,7 +614,58 @@ public class ScapeMatePlugin extends Plugin
 		}
 
 		String name = client.getLocalPlayer() == null ? null : client.getLocalPlayer().getName();
-		return new ScapeMateClient.LoadoutSnapshot(name, levels, equipment);
+		ScapeMateClient.LoadoutSnapshot snapshot =
+			new ScapeMateClient.LoadoutSnapshot(name, levels, equipment);
+
+		// Left null when the container has not been opened this session, so the
+		// server keeps what it had rather than recording an empty bank.
+		if (bankContents != null)
+		{
+			snapshot.bank = bankContents;
+			snapshot.bankValue = bankValue;
+		}
+		if (sharedBankContents != null)
+		{
+			snapshot.sharedBank = sharedBankContents;
+			snapshot.sharedBankValue = sharedBankValue;
+		}
+		return snapshot;
+	}
+
+	/** Container to flat [itemId, quantity, ...] pairs, skipping empty slots. */
+	private static int[] flatten(ItemContainer container)
+	{
+		if (container == null)
+		{
+			return null;
+		}
+
+		Item[] items = container.getItems();
+		int[] pairs = new int[items.length * 2];
+		int at = 0;
+		for (Item item : items)
+		{
+			if (item != null && item.getId() > 0 && item.getQuantity() > 0)
+			{
+				pairs[at++] = item.getId();
+				pairs[at++] = item.getQuantity();
+			}
+		}
+		return java.util.Arrays.copyOf(pairs, at);
+	}
+
+	/**
+	 * Total Grand Exchange value. Computed here because the client already has
+	 * prices, so the server never needs a price table of its own.
+	 */
+	private long valueOf(int[] pairs)
+	{
+		long total = 0;
+		for (int i = 0; i + 1 < pairs.length; i += 2)
+		{
+			total += (long) itemManager.getItemPrice(pairs[i]) * pairs[i + 1];
+		}
+		return total;
 	}
 
 	private static String equipmentDigest(List<ScapeMateClient.EquippedItem> equipment)
